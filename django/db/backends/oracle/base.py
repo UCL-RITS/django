@@ -205,8 +205,10 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
     def get_connection_params(self):
         conn_params = self.settings_dict['OPTIONS'].copy()
-        if 'use_returning_into' in conn_params:
-            del conn_params['use_returning_into']
+        for param in ['use_returning_into', 'NLS_TERRITORY', 'NLS_DATE_FORMAT',
+                      'NLS_TIMESTAMP_FORMAT', 'TIME_ZONE']:
+            if param in conn_params:
+                del conn_params[param]
         return conn_params
 
     def get_new_connection(self, conn_params):
@@ -219,15 +221,28 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         # and NLS_TIMESTAMP_FORMAT to the territory default. When all of
         # these are set in single statement it isn't clear what is supposed
         # to happen.
-        cursor.execute("ALTER SESSION SET NLS_TERRITORY = 'AMERICA'")
+        cursor.execute('ALTER SESSION SET NLS_TERRITORY = {territory}'.format(
+                       territory=self.settings_dict['OPTIONS'].get('NLS_TERRITORY',
+                                                                   'AMERICA')))
         # Set Oracle date to ANSI date format.  This only needs to execute
         # once when we create a new connection. We also set the Territory
         # to 'AMERICA' which forces Sunday to evaluate to a '1' in
         # TO_CHAR().
-        cursor.execute(
-            "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS'"
-            " NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF'"
-            + (" TIME_ZONE = 'UTC'" if settings.USE_TZ else ''))
+        session_query = ("ALTER SESSION SET NLS_DATE_FORMAT = '{date_format}'"
+                         " NLS_TIMESTAMP_FORMAT = '{timestamp_format}'")
+        session_kwargs = {
+            'date_format': self.settings_dict['OPTIONS'].get('NLS_DATE_FORMAT',
+                                                             'YYYY-MM-DD HH24:MI:SS'),
+            'timestamp_format': self.settings_dict['OPTIONS'].get('NLS_TIMESTAMP_FORMAT',
+                                                                  'YYYY-MM-DD HH24:MI:SS.FF'),
+        }
+        if settings.USE_TZ:
+            session_query += " TIME_ZONE = '{time_zone}'"
+            session_kwargs['time_zone'] = self.settings_dict['OPTIONS'].get('TIME_ZONE', 'UTC')
+        else:
+            session_query += " TIME_ZONE = ''"
+        session_query = session_query.format(**session_kwargs)
+        cursor.execute(session_query)
         cursor.close()
         if 'operators' not in self.__dict__:
             # Ticket #14149: Check whether our LIKE implementation will
